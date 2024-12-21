@@ -20,12 +20,12 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Max number of restarts
-MAX_NUM_RESTARTS = 5
+MAX_NUM_RESTARTS = 2
 # Max number of steps outside the app
-MAX_NUM_STEPS_OUTSIDE = 1000
-MAX_NUM_STEPS_OUTSIDE_KILL = 1000
+MAX_NUM_STEPS_OUTSIDE = 100
+MAX_NUM_STEPS_OUTSIDE_KILL = 100
 # Max number of replay tries
-MAX_REPLY_TRIES = 5
+MAX_REPLY_TRIES = 2
 
 # Some input event flags
 EVENT_FLAG_STARTED = "+started"
@@ -47,7 +47,7 @@ POLICY_TASK = "task"
 POLICY_NONE = "none"
 POLICY_MEMORY_GUIDED = "memory_guided"  # implemented in input_policy2
 FINISHED = "task_completed"
-MAX_SCROLL_NUM = 7
+MAX_SCROLL_NUM = 3
 USE_LMQL = False
 
 class InputInterruptedException(Exception):
@@ -58,6 +58,22 @@ def safe_dict_get(view_dict, key, default=None):
     if return_itm == None:
         return_itm = ''
     return return_itm
+
+
+import shutil
+
+
+OUTPUT_DIR = "./results"
+def print_and_log_error(error_message):
+    print(error_message)
+    error_log = [{"error_message": error_message}]
+    filename = OUTPUT_DIR + "/error.json"
+    # Check if the file already exists
+    if not os.path.exists(filename):
+        # If the file does not exist, create it and write the JSON data
+        with open(filename, "w", encoding="utf-8") as logfile:
+            json.dump(error_log, logfile, ensure_ascii=False)
+
 
 class InputPolicy(object):
     """
@@ -72,13 +88,39 @@ class InputPolicy(object):
         self.action_count = 0
         self.master = None
 
+        # For the benchmark
+        self.llm_response = "None"
+        self.prompt_tokens = -1
+        self.completion_tokens = -1
+        self.action_log = []
+
     def start(self, input_manager):
         """
         start producing events
         :param input_manager: instance of InputManager
         """
-        self.action_count = 0
+        global OUTPUT_DIR
+        OUTPUT_DIR=input_manager.benchmark_output_dir
+        start_time_initial = time.time()
+        self.action_count = (
+            -1
+        )  # NOTE: -1 because of the first two events were kill and start app
+        benchmark_log = []
+        error_code = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        end_time_initial = time.time()
+        elapsed_time_initial = end_time_initial - start_time_initial
+        task_complete = False
+        start_time_exec = time.time()
         while input_manager.enabled and self.action_count < input_manager.event_count:
+            print(
+                f"input_manager.event_count:{input_manager.event_count}, self.action_count:{self.action_count}"
+            )
+            self.llm_response = "None"
+            self.prompt_tokens = -1
+            self.completion_tokens = -1
+            self.action_log = []
             try:
                 # # make sure the first event is go to HOME screen
                 # # the second event is to start the app
@@ -86,17 +128,57 @@ class InputPolicy(object):
                 #     event = KeyEvent(name="HOME")
                 # elif self.action_count == 1 and self.master is None:
                 #     event = IntentEvent(self.app.get_start_intent())
-                if self.action_count == 0 and self.master is None:
+                if self.action_count == -1 and self.master is None:
                     event = KillAppEvent(app=self.app)
                 else:
                     event = self.generate_event(input_manager)
+                    if self.action_count > 0:
+                        # NOTE: step id starts from 1, Consistent with the Mobile-Agent-V2 of this benchmark.
+                        total_prompt_tokens += self.prompt_tokens
+                        total_completion_tokens += self.completion_tokens
+                        benchmark_log.append(
+                            {
+                                "step": self.action_count,
+                                "response": self.llm_response,
+                                "prompt_tokens": self.prompt_tokens,
+                                "completion_tokens": self.completion_tokens,
+                                "action": self.action_log,
+                            }
+                        )
+                    if "ERROR" in self.llm_response:
+                        print_and_log_error("ERROR: Inference action failed.")
+                        error_code = 2
+                        break
                 if event == FINISHED:
+                    task_complete = True
                     break
+                print(f"event:{event}")
                 input_manager.add_event(event)
+                time.sleep(2)  # sleep 2s to wait for the action to be completed
+                if self.action_count >= 0:
+                    # take screenshot
+                    local_image_path = self.device.take_screenshot()
+                    # 复制
+                    output_image_path = os.path.join(
+                        input_manager.benchmark_output_dir,
+                        str(self.action_count) + ".png",
+                    )
+                    if os.path.exists(output_image_path):
+                        print(f"remove image {output_image_path}")
+                        os.remove(output_image_path)
+                    print(
+                        f"copying image from {local_image_path} to {output_image_path}"
+                    )
+                    shutil.copy(local_image_path, output_image_path)
+
             except KeyboardInterrupt:
+                print_and_log_error("ERROR: keyboard interrupt.")
+                error_code = 2
                 break
             except InputInterruptedException as e:
                 self.logger.warning("stop sending events: %s" % e)
+                print_and_log_error("ERROR: input interrupted.")
+                error_code = 2
                 break
             # except RuntimeError as e:
             #     self.logger.warning(e.message)
@@ -105,8 +187,34 @@ class InputPolicy(object):
                 self.logger.warning("exception during sending events: %s" % e)
                 import traceback
                 traceback.print_exc()
-                continue
+                print_and_log_error(str(sys.exc_info()))
+                error_code = 1
+                break
             self.action_count += 1
+
+        end_time_exec = time.time()
+        elapsed_time_exec = end_time_exec - start_time_exec
+        benchmark_log.append(
+            {
+                "total_steps": self.action_count - 1,
+                "finish_signal": int(task_complete),
+                "elapsed_time_initial": elapsed_time_initial,
+                "elapsed_time_exec": elapsed_time_exec,
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
+            }
+        )
+        with open(
+            os.path.join(input_manager.benchmark_output_dir, "log.json"),
+            "w",
+            encoding="utf-8",
+        ) as logfile:
+            json.dump(benchmark_log, logfile, ensure_ascii=False, indent=4)
+
+        if self.action_count == input_manager.event_count:
+            error_code = 4
+
+        return error_code
 
     @abstractmethod
     def generate_event(self, input_manager):
@@ -662,6 +770,9 @@ class ManualPolicy(UtgBasedInputPolicy):
             return ManualEvent()
 
 
+import hashlib
+
+
 class TaskPolicy(UtgBasedInputPolicy):
 
     def __init__(self, device, app, random_input, task, use_memory=False, debug_mode=False):
@@ -1080,19 +1191,41 @@ class TaskPolicy(UtgBasedInputPolicy):
             print('********************************** prompt: **********************************')
             print(prompt)
             print('********************************** end of prompt **********************************')
-            response = tools.query_gpt(prompt)
+            token_storage = {"prompt_tokens": 0, "completion_tokens": 0}
+            response = tools.query_gpt(prompt, token_storage)
             
             print(f'response: {response}')
+            self.llm_response = response
+            self.prompt_tokens = token_storage["prompt_tokens"]
+            self.completion_tokens = token_storage["completion_tokens"]
             idx, action_type, input_text = tools.extract_action(response)
+            self.action_log = [
+                action_type,  # action type
+                {
+                    "detail_type": "string",  # "string" or "coordinates"
+                    "detail": "",
+                },
+            ]
         # import pdb;pdb.set_trace()
-        file_name = self.device.output_dir +'/'+ self.task.replace('"', '_').replace("'", '_') + '.yaml' #str(str(time.time()).replace('.', ''))
+        file_name = (
+            self.device.output_dir
+            + "/"
+            # + self.task.replace('"', "_").replace("'", "_")
+            # use hash to avoid long file name or special characters
+            + hashlib.sha1(
+                self.task.replace('"', "_").replace("'", "_").encode()
+            ).hexdigest()
+            + ".yaml"
+        )  # str(str(time.time()).replace('.', ''))
         idx = int(idx)
         if idx == -1:
             return FINISHED, None, None, None
         selected_action = candidate_actions[idx]
-        
-        selected_view_description = tools.get_item_properties_from_id(ui_state_desc=state_prompt, view_id=idx)
-        thought = ''# tools.get_thought(response)
+
+        selected_view_description = tools.get_item_properties_from_id(
+            ui_state_desc=state_prompt, view_id=idx
+        )
+        thought = ""  # tools.get_thought(response)
 
         if isinstance(selected_action, SetTextEvent):
             if input_text != "N/A" and input_text != None:

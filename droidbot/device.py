@@ -95,6 +95,11 @@ class Device(object):
         if self.is_emulator:
             self.logger.info("disable minicap on emulator")
             self.adapters[self.minicap] = False
+        
+        # minicap is not supporting android 32 and above
+        if self.get_sdk_version() >= 32:
+            self.logger.info("disable minicap on sdk >= 32")
+            self.adapters[self.minicap] = False
 
     def check_connectivity(self):
         """
@@ -504,7 +509,7 @@ class Device(object):
         Get current activity
         """
         r = self.adb.shell("dumpsys activity activities")
-        activity_line_re = re.compile('\* Hist #\d+: ActivityRecord{[^ ]+ [^ ]+ ([^ ]+) t(\d+)}')
+        activity_line_re = re.compile(r'\*\s*Hist\s*#\d+:\s*ActivityRecord\{[^ ]+\s*[^ ]+\s*([^ ]+)\s*t(\d+)}')
         m = activity_line_re.search(r)
         if m:
             return m.group(1)
@@ -622,6 +627,9 @@ class Device(object):
             while self.connected and package_name not in self.adb.get_installed_apps():
                 print("Please wait while installing the app...")
                 time.sleep(2)
+            # Give permission https://developer.android.com/training/data-storage/manage-all-files?hl=zh-cn
+            if self.grant_perm and self.get_sdk_version() >= 30: # MANAGE_EXTERNAL_STORAGE是安卓11才开始新增的
+                self.adb.shell(f"appops set --uid {package_name} MANAGE_EXTERNAL_STORAGE allow")
             if not self.connected:
                 install_p.terminate()
                 return

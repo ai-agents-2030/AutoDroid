@@ -22,30 +22,34 @@ class DroidBot(object):
     # this is a single instance class
     instance = None
 
-    def __init__(self,
-                 app_path=None,
-                 device_serial=None,
-                 task=None,
-                 is_emulator=False,
-                 output_dir=None,
-                 env_policy=None,
-                 policy_name=None,
-                 random_input=False,
-                 script_path=None,
-                 event_count=None,
-                 event_interval=None,
-                 timeout=None,
-                 keep_app=None,
-                 keep_env=False,
-                 cv_mode=False,
-                 debug_mode=False,
-                 profiling_method=None,
-                 grant_perm=False,
-                 enable_accessibility_hard=False,
-                 master=None,
-                 humanoid=None,
-                 ignore_ad=False,
-                 replay_output=None):
+    def __init__(
+        self,
+        benchmark_output_dir="tmp",
+        max_rounds=20,
+        app_path=None,
+        device_serial=None,
+        task=None,
+        is_emulator=False,
+        output_dir=None,
+        env_policy=None,
+        policy_name=None,
+        random_input=False,
+        script_path=None,
+        event_count=None,
+        event_interval=None,
+        timeout=None,
+        keep_app=None,
+        keep_env=False,
+        cv_mode=False,
+        debug_mode=False,
+        profiling_method=None,
+        grant_perm=False,
+        enable_accessibility_hard=False,
+        master=None,
+        humanoid=None,
+        ignore_ad=False,
+        replay_output=None,
+    ):
         """
         initiate droidbot with configurations
         :return:
@@ -66,6 +70,9 @@ class DroidBot(object):
                 shutil.rmtree(target_stylesheets_dir)
             shutil.copy(html_index_path, output_dir)
             shutil.copytree(stylesheets_path, target_stylesheets_dir)
+
+        self.benchmark_output_dir = benchmark_output_dir
+        self.max_rounds = max_rounds
 
         self.timeout = timeout
         self.timer = None
@@ -102,12 +109,14 @@ class DroidBot(object):
                 app=self.app,
                 env_policy=env_policy)
             self.input_manager = InputManager(
+                benchmark_output_dir=self.benchmark_output_dir,
+                max_rounds=self.max_rounds,
                 device=self.device,
                 app=self.app,
                 task=self.task,
                 policy_name=policy_name,
                 random_input=random_input,
-                event_count=event_count,
+                event_count=self.max_rounds,
                 event_interval=event_interval,
                 script_path=script_path,
                 profiling_method=profiling_method,
@@ -131,6 +140,7 @@ class DroidBot(object):
         start interacting
         :return:
         """
+        error_code = 0
         if not self.enabled:
             return
         self.logger.info("Starting DroidBot")
@@ -158,11 +168,14 @@ class DroidBot(object):
             if self.droidbox is not None:
                 self.droidbox.set_apk(self.app.app_path)
                 self.droidbox.start_unblocked()
-                self.input_manager.start()
+                error_code = self.input_manager.start()
                 self.droidbox.stop()
                 self.droidbox.get_output()
             else:
-                self.input_manager.start()
+                error_code = self.input_manager.start()
+                if error_code:
+                    self.stop()
+                    sys.exit(error_code)
         except KeyboardInterrupt:
             self.logger.info("Keyboard interrupt.")
             pass
@@ -174,6 +187,7 @@ class DroidBot(object):
 
         self.stop()
         self.logger.info("DroidBot Stopped")
+        sys.exit(error_code)
 
     def stop(self):
         self.enabled = False

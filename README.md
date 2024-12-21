@@ -1,3 +1,11 @@
+# 🌿🪑 [SPA-Bench](https://github.com/ai-agents-2030/SPA-Bench) – Major Adaptation for [AutoDroid](https://github.com/MobileLLM/AutoDroid) 🔧
+
+- Logs of agent-executed trajectories (screenshots, actions, errors, token costs, number of steps).
+- Support for open-source models as replacements for GPT-based models.
+- Configure parameters, e.g., MAX_SCROLL_NUM, MAX_REPLY_TRIES
+- Adaption to different Android SDK versions, e.g., disabling minicap on sdk >= 32
+  
+---
 # AutoDroid
 
 ## About

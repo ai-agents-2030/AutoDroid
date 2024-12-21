@@ -60,7 +60,7 @@ class DeviceState(object):
         # else:
         #     current_state_str = current_state
         important_view_id_path = self.device.output_dir +'/states_view_ids/'+ self.state_str + '.txt'
-        f = open(important_view_id_path, 'w')
+        f = open(important_view_id_path, 'w', encoding='utf-8')
         f.write(str(important_view_ids))
         f.close()
 

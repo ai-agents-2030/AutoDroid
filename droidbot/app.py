@@ -26,6 +26,8 @@ class App(object):
                 os.makedirs(output_dir)
 
         # from androguard.core.bytecodes.apk import APK
+        from androguard.util import set_log
+        set_log("ERROR")
         from androguard.core.apk import APK
         self.apk = APK(self.app_path)
         self.package_name = self.apk.get_package()

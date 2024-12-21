@@ -27,10 +27,22 @@ class InputManager(object):
     This class manages all events to send during app running
     """
 
-    def __init__(self, device, app, task, policy_name, random_input,
-                 event_count, event_interval,
-                 script_path=None, profiling_method=None, master=None,
-                 replay_output=None):
+    def __init__(
+        self,
+        device,
+        app,
+        task,
+        policy_name,
+        random_input,
+        event_count,
+        event_interval,
+        script_path=None,
+        profiling_method=None,
+        master=None,
+        replay_output=None,
+        benchmark_output_dir="tmp",
+        max_rounds=20,
+    ):
         """
         manage input event sent to the target device
         :param device: instance of Device
@@ -40,6 +52,9 @@ class InputManager(object):
         """
         self.logger = logging.getLogger('InputEventManager')
         self.enabled = True
+
+        self.benchmark_output_dir = benchmark_output_dir
+        self.max_rounds = max_rounds
 
         self.device = device
         self.app = app
@@ -113,10 +128,10 @@ class InputManager(object):
         start sending event
         """
         self.logger.info("start sending events, policy is %s" % self.policy_name)
-
+        error_code = None
         try:
             if self.policy is not None:
-                self.policy.start(self)
+                error_code = self.policy.start(self)
             elif self.policy_name == POLICY_NONE:
                 self.device.start_app(self.app)
                 if self.event_count == 0:
@@ -155,6 +170,7 @@ class InputManager(object):
 
         self.stop()
         self.logger.info("Finish sending events")
+        return error_code
 
     def stop(self):
         """

@@ -15,6 +15,11 @@ def parse_args():
     """
     parser = argparse.ArgumentParser(description="Start DroidBot to test an Android app.",
                                      formatter_class=argparse.RawTextHelpFormatter)
+    
+    parser.add_argument("-benchmark_output_dir", action="store", dest="benchmark_output_dir", required=True)
+    parser.add_argument("-max_rounds", action="store", dest="max_rounds", required=True)
+    parser.add_argument("-openai_api_model", action="store", dest="openai_api_model", default="gpt-3.5-turbo")
+    
     parser.add_argument("-d", action="store", dest="device_serial", required=False,
                         help="The serial number of target device (use `adb devices` to find)")
     parser.add_argument("-a", action="store", dest="apk_path", required=True,
@@ -63,7 +68,13 @@ def main():
         print("APK does not exist.")
         return
 
+    # set environment variable for openai model
+    os.environ["OPENAI_API_MODEL"] = opts.openai_api_model
+
     droidbot = DroidBot(
+        benchmark_output_dir=opts.benchmark_output_dir,
+        max_rounds=int(opts.max_rounds),
+        
         app_path=opts.apk_path,
         device_serial=opts.device_serial,
         task=opts.task,

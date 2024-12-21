@@ -37,7 +37,10 @@ def insert_id_into_view(view, id):
         return view[:9] + f' id={id}' + view[9:]
     if view[:5] == '<span':
         return view[:5] + f' id={id}' + view[5:]
-    import pdb;pdb.set_trace()
+    import pdb
+
+    pdb.set_trace()
+
 
 def get_view_without_id(view_desc):
     '''
@@ -55,24 +58,50 @@ def get_view_without_id(view_desc):
 #     r = requests.post(url=URL, json=body, headers=headers)
 #     return r.content.decode()
 
-def query_gpt(prompt):
+def query_gpt(prompt, token_storage=None):
     # print(prompt)
     client = OpenAI(
-        api_key=os.environ['APIKey']
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     )
-    retry = 0
-    completion = client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        model="gpt-3.5-turbo",
-        timeout=15
-    )
-    res = completion.choices[0].message.content
-    return res
+    model = os.environ.get("OPENAI_API_MODEL", "gpt-3.5-turbo")
+    print(f"Using model: {model}")
+
+    counter = 0
+    res_json = None
+    res_content = None
+    while counter < 3:
+        counter += 1
+        try:
+            res_json = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                model=model,
+                timeout=15,
+                max_tokens=2048, # bug fix for swift
+            )
+            res_content = res_json.choices[0].message.content
+            if token_storage:
+                token_storage["prompt_tokens"] += res_json.usage.prompt_tokens
+                token_storage["completion_tokens"] += res_json.usage.completion_tokens
+        except Exception as e:
+            print(f"Error: {e}")
+            try:
+                print(res_content)
+            except Exception as e:
+                print(f"Erorr: {e} {res_json}")
+        else:
+            break
+
+    if counter == 3:
+        return "ERROR"
+
+    return res_content
+
 
 def delete_old_views_from_new_state(old_state, new_state, without_id=True):
     '''
@@ -243,13 +272,29 @@ def extract_actionv0(answer):
                     pass
     return llm_id, llm_action, llm_input
 
-def extract_action(v):
+def extract_action(v, action_log=None):
+    llm_id = -1
+    llm_action = "N/A"
+    llm_input = "N/A"
+    if action_log is None:
+        action_log = [
+            "",  # action type
+            {
+                "detail_type": "string",  # "string" or "coordinates"
+                "detail": "",
+            },
+        ]
     import json
+
     try:
-        if isinstance(v, str):
-            v = ast.literal_eval(v)
+        try:
+            if isinstance(v, str):
+                v = ast.literal_eval(v)
+        except:
+            v = v.split("```json")[1].split("```")[0]
+            v = json.loads(v)
     except:
-        print('format error: v')
+        print("format error: v")
         llm_id = -1
         llm_action = "N/A"
         llm_input = "N/A"
@@ -264,6 +309,8 @@ def extract_action(v):
             llm_id = -1
             llm_action = "N/A"
             llm_input = "N/A"
+            action_log[0] = "Task completed."
+            action_log[1]["detail"] = "Task completed."
         else:
             llm_id = 'N/A'
 
@@ -281,16 +328,27 @@ def extract_action(v):
                 llm_id = int(llm_id)
             if "tap" in llm_action.lower() or "check" in llm_action.lower() or "choose" in llm_action.lower():
                 llm_action = "tap"
+                action_log[0] = llm_action
+                action_log[1]["detail"] = f"Tapped on {llm_id}"
             elif "none" in llm_action.lower():
                 llm_action = "N/A"
+                action_log[0] = llm_action
+                action_log[1]["detail"] = f"No action needed."
             elif "click" in llm_action.lower():
                 llm_action = "tap"
+                action_log[0] = llm_action
+                action_log[1]["detail"] = f"Tapped on {llm_id}"
             elif "input" in llm_action.lower():
                 llm_action = "input"
+                action_log[0] = llm_action
+                action_log[1]["detail"] = llm_input
             assert llm_action in ["tap", "input", "N/A"]
         except:
             llm_id = -1
+            action_log[0] = "N/A"
+            action_log[1]["detail"] = f"Unknown action."
     return llm_id, llm_action, llm_input
+
 
 def insert_onclick_into_prompt(state_prompt, insert_ele, target_ele_desc):
 
